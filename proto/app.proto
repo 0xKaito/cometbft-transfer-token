@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package tokenapp;
+
+option go_package = "github.com/kvstore/proto";
+
+// TransferTransaction defines a token transfer request.
+message TransferTransaction {
+  string sender = 1;   // Sender address
+  string receiver = 2; // Receiver address
+  uint64 amount = 3;   // Amount to transfer
+}
+
+// Transaction wraps different types of transactions.
+message Transaction {
+  oneof tx_type {
+    TransferTransaction transfer = 1;
+  }
+}
