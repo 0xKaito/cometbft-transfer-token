@@ -19,6 +19,7 @@ func main() {
 			Sender: "Alice",
 			Receiver: "Bob",
 			Amount: uint64(10),
+			Timestamp: int64(time.Now().UnixMicro()),
 		},
 	}
 

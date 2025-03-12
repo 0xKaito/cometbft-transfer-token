@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	pb "kvstore/proto"
 
@@ -29,6 +30,7 @@ func NewKVStoreApplication() *KVStoreApplication {
         balances: map[string]uint64{
 			"Alice":   1000,
 			"Bob":     500,
+			"Clark":  300,
 		},
     }
 }
@@ -54,16 +56,6 @@ func (app *KVStoreApplication) InitChain(_ context.Context, chain *abcitypes.Ini
 func (app *KVStoreApplication) PrepareProposal(_ context.Context, req *abcitypes.PrepareProposalRequest) (*abcitypes.PrepareProposalResponse, error) {
 	var newTxs [][]byte
 
-	var remainingQueue []QueuedTx
-	for _, queuedTx := range app.pendingTxs {
-		if int(req.Height) >= queuedTx.execHeight {
-			newTxs = append(newTxs, queuedTx.tx)
-		} else {
-			remainingQueue = append(remainingQueue, queuedTx)
-		}
-	}
-	app.pendingTxs = remainingQueue
-
 	for _, tx := range req.Txs {
         var decodedTx pb.Transaction
 		if err := proto.Unmarshal(tx, &decodedTx); err != nil {
@@ -73,16 +65,37 @@ func (app *KVStoreApplication) PrepareProposal(_ context.Context, req *abcitypes
 
         // Handle Transfer Transactions
 		if transfer := decodedTx.GetTransfer(); transfer != nil {
-            if transfer.Sender == "Alice" {
-                fmt.Printf("Removing Alice's transaction, will execute at block %d\n", req.Height+2)
-                app.pendingTxs = append(app.pendingTxs, QueuedTx{tx: tx, execHeight: int(req.Height + 2)})
-            } else {
-				fmt.Printf("Adding transaction, will execute at block %d\n", req.Height)
-                newTxs = append(newTxs, tx)
-            }
-        }
+			if transfer.Sender == "Alice" {
+				// Check if Alice's transaction is already pending to avoid duplicate adds
+				exists := false
+				for _, pendingTx := range app.pendingTxs {
+					if bytes.Equal(pendingTx.tx, tx) {
+						exists = true
+						break
+					}
+				}
 
+				if !exists {
+					log.Println("Delaying Alice's transaction, will execute at block %d\n", req.Height+2)
+					app.pendingTxs = append(app.pendingTxs, QueuedTx{tx: tx, execHeight: int(req.Height + 2)})
+				}
+				continue
+			}
+		}
+
+		newTxs = append(newTxs, tx)
 	}
+
+	var remainingQueue []QueuedTx
+	for _, queuedTx := range app.pendingTxs {
+		if int(req.Height) == queuedTx.execHeight {
+			log.Println("Adding Alice's transaction %s, at block %d\n", queuedTx.tx, req.Height+2)
+			newTxs = append(newTxs, queuedTx.tx)
+		} else {
+			remainingQueue = append(remainingQueue, queuedTx)
+		}
+	}
+	app.pendingTxs = remainingQueue
 
 	return &abcitypes.PrepareProposalResponse{Txs: newTxs}, nil
 }
@@ -108,14 +121,14 @@ func (app *KVStoreApplication) FinalizeBlock(_ context.Context, req *abcitypes.F
 			amount := transfer.Amount
 
 			if app.balances[sender] < amount {
-				fmt.Printf("Insufficient balance for %s\n", sender)
+				log.Println("Insufficient balance for %s\n", sender)
 				txs = append(txs, &abcitypes.ExecTxResult{Code: 1})
 				continue
 			}
 
 			app.balances[sender] -= amount
 			app.balances[receiver] += amount
-			fmt.Printf("%s sent %d tokens to %s\n", sender, amount, receiver)
+			log.Println("%s sent %d tokens to %s\n", sender, amount, receiver)
 
 			txs = append(txs, &abcitypes.ExecTxResult{Code: 0})
 		}
